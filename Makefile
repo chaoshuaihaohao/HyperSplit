@@ -18,7 +18,7 @@ OBJ = $(patsubst $(CODE_DIR)/%.c, $(BUILD_DIR)/%.o, $(SRC))
 BIN = $(BUILD_DIR)/pc_algo
 
 CC = gcc
-CFLAGS = -Wall -g -O2
+CFLAGS = -Wall -g -O0
 
 all: $(BIN)
 

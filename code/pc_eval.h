@@ -30,10 +30,10 @@
 #include <sys/queue.h>
 #include <sys/time.h>
 
-#define RULE_MAX (1 << 17)  /* 128K */
-#define PKT_MAX (1 << 17)   /* 128K */
+#define RULE_MAX (1 << 17)	/* 128K */
+#define PKT_MAX (1 << 17)	/* 128K */
 
-#define CACHE_LINE_SIZE 64 /* 64 bytes */
+#define CACHE_LINE_SIZE 64	/* 64 bytes */
 
 #define ALIGN(size, align) ({ \
         const typeof(align) __align = align; \
@@ -44,78 +44,79 @@
 #define PKT_FMT "%u %u %u %u %u %d\n"
 
 enum {
-    DIM_INV = -1,
-    DIM_SIP = 0,
-    DIM_DIP = 1,
-    DIM_SPORT = 2,
-    DIM_DPORT = 3,
-    DIM_PROTO = 4,
-    DIM_MAX = 5
+	DIM_INV = -1,
+	DIM_SIP = 0,
+	DIM_DIP = 1,
+	DIM_SPORT = 2,
+	DIM_DPORT = 3,
+	DIM_PROTO = 4,
+	DIM_MAX = 5
 };
 
 enum {
-    METHOD_INV = -1,
-    METHOD_HS = 0,
+	METHOD_INV = -1,
+	METHOD_HS = 0,
 };
 
 /* little endian */
 union point {
-    struct { uint64_t low, high; } u128;
-    uint64_t u64;
-    uint32_t u32;
-    uint16_t u16;
-    uint8_t u8;
+	struct {
+		uint64_t low, high;
+	} u128;
+	uint64_t u64;
+	uint32_t u32;
+	uint16_t u16;
+	uint8_t u8;
 };
 
 /* range rule, compatible with struct range */
 struct rule {
-    union point dim[DIM_MAX][2]; //[2] means range
-    int pri;
+	union point dim[DIM_MAX][2];	//[2] means range
+	int pri;
 };
 
 struct rule_node {
-    struct rule r;
-    STAILQ_ENTRY(rule_node) n;
+	struct rule r;
+	 STAILQ_ENTRY(rule_node) n;
 };
 
 STAILQ_HEAD(rule_head, rule_node);
 
 struct rule_set {
-    struct rule *rules; //rule_set_array_ptr
-    int num;
+	struct rule *rules;	//rule_set_array_ptr
+	int num;
 };
 
-
 struct packet {
-    union point val[DIM_MAX];
-    int match; //match the rule's row num
+	union point val[DIM_MAX];
+	int match;		//match the rule's row num
 };
 
 struct trace {
-    struct packet *pkts; //pts_array_ptr
-    int num;
+	struct packet *pkts;	//pts_array_ptr
+	int num;
 };
 
 struct range {
-    union point begin;
-    union point end;
+	union point begin;
+	union point end;
 };
 
 struct range_node {
-    struct range r;
-    STAILQ_ENTRY(range_node) n;
+	struct range r;
+	 STAILQ_ENTRY(range_node) n;
 };
 
 STAILQ_HEAD(range_head, range_node);
 
 struct prefix {
-    union point value;
-    int prefix_len;
+	union point value;
+	int prefix_len;
 };
 
 struct prefix_node {
-    struct prefix p;
-    STAILQ_ENTRY(prefix_node) n;
+	struct prefix p;
+	 STAILQ_ENTRY(prefix_node) n;
 };
 
 STAILQ_HEAD(prefix_head, prefix_node);
@@ -145,16 +146,14 @@ void point_print(union point *point);
 
 void set_bit(union point *p, unsigned int bit, unsigned int val);
 
-void gen_prefix_mask(union point *p, unsigned int bits,
-        unsigned int mask_len);
+void gen_prefix_mask(union point *p, unsigned int bits, unsigned int mask_len);
 void gen_suffix_mask(union point *p, unsigned int mask_len);
 
 void range2prefix(struct prefix_head *head, struct range *range,
-        unsigned int bits);
+		  unsigned int bits);
 void prefix2range(struct range *range, struct prefix *prefix,
-        unsigned int bits);
+		  unsigned int bits);
 
 void split_range_rule(struct rule_head *head, struct rule *rule);
 
 #endif /* __PC_EVAL_H__ */
-

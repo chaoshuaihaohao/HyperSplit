@@ -19,27 +19,29 @@
 #define NODE_NUM_BITS 28;
 #define NODE_NUM_MAX (1 << NODE_NUM_BITS)
 
+/* bd: binary decision */
 struct hs_bd_node {
-    uint8_t d2s;
-    uint8_t depth;
-    union point thresh;
-    struct hs_bd_node *child[2];
+	uint8_t d2s;
+	uint8_t depth;
+	union point thresh;
+	struct hs_bd_node *child[2];
 };
 
+/* rt: run time */
 union hs_rt_node {
-    uint64_t u64;
+	uint64_t u64;
 
-    struct {
-        uint32_t intr :1;
-        uint32_t d2s :3;
-        uint32_t child :NODE_NUM_BITS;
-        uint32_t thresh;
-    } node;
+	struct {
+		uint32_t intr:1;	//Internal nodes
+		uint32_t d2s:3;
+		uint32_t child:NODE_NUM_BITS;
+		uint32_t thresh;
+	} node;
 };
 
 struct hs_rt {
-    union hs_rt_node *root;
-    void *base;
+	union hs_rt_node *root;
+	void *base;
 };
 
 int build(const struct rule_set *rs, void *userdata);
@@ -48,4 +50,3 @@ int classify(struct packet *pkt, const void *userdata);
 void cleanup(void *userdata);
 
 #endif /* __PC_ALGO_H__ */
-

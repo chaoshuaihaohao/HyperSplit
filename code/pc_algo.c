@@ -17,527 +17,633 @@
 #include "pc_algo.h"
 
 struct seg_point {
-    union point pnt;
-    struct { uint8_t begin :1; uint8_t end :1; } flag;
+	union point pnt;
+	struct {
+		uint8_t begin:1;
+		uint8_t end:1;
+	} flag;
 };
 
 struct node_queue_entry {
-    struct hs_bd_node *bd_node;
-    int offset;
-    STAILQ_ENTRY(node_queue_entry) e;
+	struct hs_bd_node *bd_node;
+	int offset;
+	 STAILQ_ENTRY(node_queue_entry) e;
 };
 
 STAILQ_HEAD(node_queue_head, node_queue_entry);
 
 static struct {
-    size_t segment_num[DIM_MAX];
-    size_t segment_total;
+	size_t segment_num[DIM_MAX];
+	size_t segment_total;
 
-    size_t worst_depth;
-    size_t average_depth;
+	size_t worst_depth;
+	size_t average_depth;
 
-    size_t tree_node_num;
-    size_t leaf_node_num;
+	size_t tree_node_num;
+	size_t leaf_node_num;
 
-    /* TODO: assume max_depth = 128 */
-    size_t depth_node[128][2];
+	/* TODO: assume max_depth = 128 */
+	size_t depth_node[128][2];
 } g_statistics;
 
 static int seg_pnt_cmp(const void *a, const void *b)
 {
-    struct seg_point *pa = (typeof(pa))a;
-    struct seg_point *pb = (typeof(pb))b;
+	struct seg_point *pa = (typeof(pa)) a;
+	struct seg_point *pb = (typeof(pb)) b;
 
-    if (is_less(&pa->pnt, &pb->pnt)) {
-        return -1;
-    } else if (is_greater(&pa->pnt, &pb->pnt)) {
-        return 1;
-    } else {
-        return 0;
-    }
+	if (is_less(&pa->pnt, &pb->pnt)) {
+		return -1;
+	} else if (is_greater(&pa->pnt, &pb->pnt)) {
+		return 1;
+	} else {
+		return 0;
+	}
 }
 
 static int build_hs_tree(const struct rule_set *rs,
-        struct hs_bd_node *cur_node, int depth)
+			 struct hs_bd_node *cur_node, int depth)
 {
-    int *wght, wght_all;
-    float wght_avg, wght_jdg;
-    int max_pnt, num, pnt_num, d2s, d, i, j;
+	int *wght, wght_all;
+	float wght_avg, wght_jdg;
+	int max_pnt, num, pnt_num, d2s, d, i, j;
 
-    union point thresh;
-    struct rule_set child_rs;
-    struct seg_point *seg_pnts;
-    struct range lrange, rrange;
+	union point thresh;
+	struct rule_set child_rs;
+	struct seg_point *seg_pnts;
+	struct range lrange, rrange;
 
-    max_pnt = d2s = 0;
-    num = rs->num << 1;
-    wght_avg = rs->num + 1; //max, all rules project one segment
+	max_pnt = d2s = 0;
+	num = rs->num << 1;
+	wght_avg = rs->num + 1;	//max, all rules project one segment
 
-    bzero(&lrange, sizeof(lrange));
-    bzero(&rrange, sizeof(rrange));
+	bzero(&lrange, sizeof(lrange));
+	bzero(&rrange, sizeof(rrange));
 
-    wght = malloc(num * sizeof(*wght));
-    seg_pnts  = malloc(num * sizeof(*seg_pnts));
-    child_rs.rules = malloc(rs->num * sizeof(*child_rs.rules));
-    if (wght == NULL || seg_pnts == NULL || child_rs.rules == NULL) {
-        free(wght);
-        free(seg_pnts);
-        free(child_rs.rules);
-        return -1;
-    }
+	wght = malloc(num * sizeof(*wght));
+	seg_pnts = malloc(num * sizeof(*seg_pnts));
+	child_rs.rules = malloc(rs->num * sizeof(*child_rs.rules));
+	if (wght == NULL || seg_pnts == NULL || child_rs.rules == NULL) {
+		free(wght);
+		free(seg_pnts);
+		free(child_rs.rules);
+		return -1;
+	}
 
-    /*
-     * start here
-     */
-    for (d = 0; d < DIM_MAX; d++) {
-        bzero(wght, num * sizeof(*wght));
-        bzero(seg_pnts, num * sizeof(*seg_pnts));
+	/*
+	 * start here
+	 */
+	for (d = 0; d < DIM_MAX; d++) {
+		bzero(wght, num * sizeof(*wght));
+		bzero(seg_pnts, num * sizeof(*seg_pnts));
 
-        /*
-         * shadow rules on each dim
-         */
-        for (i = 0; i < num; i += 2) {
-            seg_pnts[i].pnt = rs->rules[i >> 1].dim[d][0];
-            seg_pnts[i].flag.begin = 1;
-            seg_pnts[i + 1].pnt = rs->rules[i >> 1].dim[d][1];
-            seg_pnts[i + 1].flag.end = 1;
-        }
+		/*
+		 * shadow rules on each dim
+		 */
+		for (i = 0; i < num; i += 2) {
+			seg_pnts[i].pnt = rs->rules[i >> 1].dim[d][0];
+			seg_pnts[i].flag.begin = 1;
+			seg_pnts[i + 1].pnt = rs->rules[i >> 1].dim[d][1];
+			seg_pnts[i + 1].flag.end = 1;
+		}
 
-        qsort(seg_pnts, num, sizeof(*seg_pnts), seg_pnt_cmp);
+		qsort(seg_pnts, num, sizeof(*seg_pnts), seg_pnt_cmp);
 
-        /*
-         * make segments. Note: pnts with the same val may form one seg
-         *                Deal with the same val condition
-         *                Compact the seg_pnts
-         */
-        for (pnt_num = 0, i = pnt_num + 1; i < num; i++) {
-            //for loop used to scan two indexes
-            //pnt_num increases conditionally, i increases directly
-            //pnt_num increases in the loops according to some condition
-            //i increases every loop
-            if (is_equal(&seg_pnts[pnt_num].pnt, &seg_pnts[i].pnt)) {
-                seg_pnts[pnt_num].flag.begin |= seg_pnts[i].flag.begin;
-                seg_pnts[pnt_num].flag.end |= seg_pnts[i].flag.end;
+		/*
+		 * make segments. Note: pnts with the same val may form one seg
+		 *                Deal with the same val condition
+		 *                Compact the seg_pnts
+		 */
+		for (pnt_num = 0, i = pnt_num + 1; i < num; i++) {
+			//for loop used to scan two indexes
+			//pnt_num increases conditionally, i increases directly
+			//pnt_num increases in the loops according to some condition
+			//i increases every loop
+			if (is_equal(&seg_pnts[pnt_num].pnt, &seg_pnts[i].pnt)) {
+				seg_pnts[pnt_num].flag.begin |=
+				    seg_pnts[i].flag.begin;
+				seg_pnts[pnt_num].flag.end |=
+				    seg_pnts[i].flag.end;
 
-                if (i + 1 != num) {
-                    //when i is not the end, go to the next loop
-                    //pnt_num doesn't increase
-                    continue;
-                }
+				if (i + 1 != num) {
+					//when i is not the end, go to the next loop
+					//pnt_num doesn't increase
+					continue;
+				}
 
-                if (seg_pnts[pnt_num].flag.begin & seg_pnts[pnt_num].flag.end) {
-                    seg_pnts[pnt_num + 1] = seg_pnts[pnt_num];
-                    seg_pnts[pnt_num++].flag.end = 0;
-                    seg_pnts[pnt_num].flag.begin = 0;
-                }
+				if (seg_pnts[pnt_num].flag.
+				    begin & seg_pnts[pnt_num].flag.end) {
+					seg_pnts[pnt_num + 1] =
+					    seg_pnts[pnt_num];
+					seg_pnts[pnt_num++].flag.end = 0;
+					seg_pnts[pnt_num].flag.begin = 0;
+				}
 
-                break;
-            }
+				break;
+			}
+			//the following statements only work
+			//when seg_pnts[pnt_num] is unequal to seg_pnts[i] or i == num-1
+			//when the former if is true, this if is true possibly
+			if (seg_pnts[pnt_num].flag.begin & seg_pnts[pnt_num].
+			    flag.end) {
+				seg_pnts[pnt_num + 1] = seg_pnts[pnt_num];
+				seg_pnts[pnt_num].flag.end = 0;
+				pnt_num++;
+				seg_pnts[pnt_num].flag.begin = 0;
+			}
 
-            //the following statements only work
-            //when seg_pnts[pnt_num] is unequal to seg_pnts[i] or i == num-1
-            //when the former if is true, this if is true possibly
-            if (seg_pnts[pnt_num].flag.begin & seg_pnts[pnt_num].flag.end) {
-                seg_pnts[pnt_num + 1] = seg_pnts[pnt_num];
-                seg_pnts[pnt_num++].flag.end = 0;
-                seg_pnts[pnt_num].flag.begin = 0;
-            }
+			seg_pnts[++pnt_num] = seg_pnts[i];
+		}
 
-            seg_pnts[++pnt_num] = seg_pnts[i];
-        }
+		if (++pnt_num > max_pnt) {
+			max_pnt = pnt_num;
+		}
 
-        if (++pnt_num > max_pnt) {
-            max_pnt = pnt_num;
-        }
+		if (depth == 0) {
+			g_statistics.segment_num[d] = pnt_num;
+			g_statistics.segment_total *= pnt_num;
+		}
 
-        if (depth == 0) {
-            g_statistics.segment_num[d] = pnt_num;
-            g_statistics.segment_total *= pnt_num;
-        }
+		if (pnt_num < 3) {
+			continue;	/* skip this dim: no more ranges */
+		}
 
-        if (pnt_num < 3) {
-            continue; /* skip this dim: no more ranges */
-        }
+		/*
+		 * gen heuristic info
+		 */
+		for (wght_all = 0, i = 0; i < pnt_num - 1; i++) {
+			for (wght[i] = 0, j = 0; j < rs->num; j++) {
+				if (is_less_equal(&rs->rules[j].dim[d][0],
+						  &seg_pnts[i].pnt) &&
+				    is_greater_equal(&rs->rules[j].dim[d][1],
+						     &seg_pnts[i + 1].pnt)) {
+					wght[i]++;
+					wght_all++;
+				}
+			}
+		}
 
-        /*
-         * gen heuristic info
-         */
-        for (wght_all = 0, i = 0; i < pnt_num - 1; i++) {
-            for (wght[i] = 0, j = 0; j < rs->num; j++) {
-                if (is_less_equal(&rs->rules[j].dim[d][0],
-                        &seg_pnts[i].pnt) &&
-                    is_greater_equal(&rs->rules[j].dim[d][1],
-                        &seg_pnts[i + 1].pnt)) {
-                    wght[i]++;
-                    wght_all++;
-                }
-            }
-        }
+		wght_jdg = (float)wght_all / (pnt_num - 1);
 
-        wght_jdg = (float)wght_all / (pnt_num - 1);
+		if (wght_avg <= wght_jdg) {
+			continue;	/* skip this dim: the less the better */
+		}
 
-        if (wght_avg <= wght_jdg) {
-            continue; /* skip this dim: the less the better */
-        }
+		/*
+		 * found dimension candidate
+		 */
+		d2s = d, wght_avg = wght_jdg;
 
-        /*
-         * found dimension candidate
-         */
-        d2s = d, wght_avg = wght_jdg;
+		for (wght_jdg = wght[0], i = 1; i < pnt_num - 1;
+		     wght_jdg += wght[i], i++) {
 
-        for (wght_jdg = wght[0], i = 1; i < pnt_num - 1;
-            wght_jdg += wght[i], i++) {
+			thresh = seg_pnts[i].pnt;
+			if (seg_pnts[i].flag.begin) {
+				point_dec(&thresh);
+			}
 
-            thresh = seg_pnts[i].pnt;
-            if (seg_pnts[i].flag.begin) {
-                point_dec(&thresh);
-            }
+			if (wght_jdg > (wght_all / 2.f)) {
+				break;	/* reach the half of the wght */
+			}
+		}
 
-            if (wght_jdg > (wght_all / 2.f)) {
-                break; /* reach the half of the wght */
-            }
-        }
+		lrange.begin = seg_pnts[0].pnt;
+		lrange.end = thresh;
 
-        lrange.begin = seg_pnts[0].pnt;
-        lrange.end = thresh;
+		rrange.begin = thresh;
+		point_inc(&rrange.begin);
+		rrange.end = seg_pnts[pnt_num - 1].pnt;
 
-        rrange.begin = thresh;
-        point_inc(&rrange.begin);
-        rrange.end = seg_pnts[pnt_num - 1].pnt;
+	}			/* end of for (d = 0; d < DIM_MAX; d++) */
 
-    } /* end of for (d = 0; d < DIM_MAX; d++) */
+	free(seg_pnts);
+	free(wght);
 
-    free(seg_pnts);
-    free(wght);
+	/*
+	 * gen leaf node
+	 */
+	if (max_pnt < 3) {
+		cur_node->d2s = -1;
+		cur_node->depth = depth;
+		cur_node->thresh.u64 = rs->rules[0].pri;
+		cur_node->child[0] = NULL;
+		cur_node->child[1] = NULL;
 
-    /*
-     * gen leaf node
-     */
-    if (max_pnt < 3) {
-        cur_node->d2s = -1;
-        cur_node->depth = depth;
-        cur_node->thresh.u64 = rs->rules[0].pri;
-        cur_node->child[0] = NULL;
-        cur_node->child[1] = NULL;
+		free(child_rs.rules);
+		g_statistics.leaf_node_num++;
+		g_statistics.depth_node[depth][1]++;
+		g_statistics.average_depth += depth;
+		if (g_statistics.worst_depth < depth) {
+			g_statistics.worst_depth = depth;
+		}
+		return 0;
+	}
 
-        free(child_rs.rules);
-        g_statistics.leaf_node_num++;
-        g_statistics.depth_node[depth][1]++;
-        g_statistics.average_depth += depth;
-        if (g_statistics.worst_depth < depth) {
-            g_statistics.worst_depth = depth;
-        }
-        return 0;
-    }
+	cur_node->d2s = d2s;
+	cur_node->depth = depth;
+	cur_node->thresh = thresh;
 
-    cur_node->d2s = d2s;
-    cur_node->depth = depth;
-    cur_node->thresh = thresh;
+	/*
+	 * gen left child
+	 */
+	cur_node->child[0] = malloc(sizeof(*cur_node->child[0]));
+	if (cur_node->child[0] == NULL) {
+		free(child_rs.rules);
+		return -1;
+	}
 
-    /*
-     * gen left child
-     */
-    cur_node->child[0] = malloc(sizeof(*cur_node->child[0]));
-    if (cur_node->child[0] == NULL) {
-        free(child_rs.rules);
-        return -1;
-    }
+	bzero(child_rs.rules, rs->num * sizeof(*child_rs.rules));
 
-    bzero(child_rs.rules, rs->num * sizeof(*child_rs.rules));
+	for (i = 0, child_rs.num = 0; i < rs->num; i++) {
+		if (is_greater(&rs->rules[i].dim[d2s][0], &lrange.end) ||
+		    is_less(&rs->rules[i].dim[d2s][1], &lrange.begin)) {
+			continue;
+		}
 
-    for (i = 0, child_rs.num = 0; i < rs->num; i++) {
-        if (is_greater(&rs->rules[i].dim[d2s][0], &lrange.end) ||
-            is_less(&rs->rules[i].dim[d2s][1], &lrange.begin)) {
-            continue;
-        }
+		child_rs.rules[child_rs.num] = rs->rules[i];
 
-        child_rs.rules[child_rs.num] = rs->rules[i];
+		/* rules must be trimmed */
+		if (is_less(&child_rs.rules[child_rs.num].dim[d2s][0],
+			    &lrange.begin)) {
+			child_rs.rules[child_rs.num].dim[d2s][0] = lrange.begin;
+		}
+		if (is_greater(&child_rs.rules[child_rs.num].dim[d2s][1],
+			       &lrange.end)) {
+			child_rs.rules[child_rs.num].dim[d2s][1] = lrange.end;
+		}
 
-        /* rules must be trimmed */
-        if (is_less(&child_rs.rules[child_rs.num].dim[d2s][0],
-            &lrange.begin)) {
-            child_rs.rules[child_rs.num].dim[d2s][0] = lrange.begin;
-        }
-        if (is_greater(&child_rs.rules[child_rs.num].dim[d2s][1],
-            &lrange.end)) {
-            child_rs.rules[child_rs.num].dim[d2s][1] = lrange.end;
-        }
+		child_rs.num++;
+	}
 
-        child_rs.num++;
-    }
+	if (build_hs_tree(&child_rs, cur_node->child[0], depth + 1) != 0) {
+		free(cur_node->child[0]);
+		free(child_rs.rules);
+		return -1;
+	}
 
-    if (build_hs_tree(&child_rs, cur_node->child[0], depth + 1) != 0) {
-        free(cur_node->child[0]);
-        free(child_rs.rules);
-        return -1;
-    }
+	/*
+	 * gen right child
+	 */
+	cur_node->child[1] = malloc(sizeof(*cur_node->child[1]));
+	if (cur_node->child[1] == NULL) {
+		free(child_rs.rules);
+		return -1;
+	}
 
-    /*
-     * gen right child
-     */
-    cur_node->child[1] = malloc(sizeof(*cur_node->child[1]));
-    if (cur_node->child[1] == NULL) {
-        free(child_rs.rules);
-        return -1;
-    }
+	bzero(child_rs.rules, rs->num * sizeof(*child_rs.rules));
 
-    bzero(child_rs.rules, rs->num * sizeof(*child_rs.rules));
+	for (i = 0, child_rs.num = 0; i < rs->num; i++) {
+		if (is_greater(&rs->rules[i].dim[d2s][0], &rrange.end) ||
+		    is_less(&rs->rules[i].dim[d2s][1], &rrange.begin)) {
+			continue;
+		}
 
-    for (i = 0, child_rs.num = 0; i < rs->num; i++) {
-        if (is_greater(&rs->rules[i].dim[d2s][0], &rrange.end) ||
-            is_less(&rs->rules[i].dim[d2s][1], &rrange.begin)) {
-            continue;
-        }
+		child_rs.rules[child_rs.num] = rs->rules[i];
 
-        child_rs.rules[child_rs.num] = rs->rules[i];
+		/* rules must be trimmed */
+		if (is_less(&child_rs.rules[child_rs.num].dim[d2s][0],
+			    &rrange.begin)) {
+			child_rs.rules[child_rs.num].dim[d2s][0] = rrange.begin;
+		}
+		if (is_greater(&child_rs.rules[child_rs.num].dim[d2s][1],
+			       &rrange.end)) {
+			child_rs.rules[child_rs.num].dim[d2s][1] = rrange.end;
+		}
 
-        /* rules must be trimmed */
-        if (is_less(&child_rs.rules[child_rs.num].dim[d2s][0],
-            &rrange.begin)) {
-            child_rs.rules[child_rs.num].dim[d2s][0] = rrange.begin;
-        }
-        if (is_greater(&child_rs.rules[child_rs.num].dim[d2s][1],
-            &rrange.end)) {
-            child_rs.rules[child_rs.num].dim[d2s][1] = rrange.end;
-        }
+		child_rs.num++;
+	}
 
-        child_rs.num++;
-    }
+	if (build_hs_tree(&child_rs, cur_node->child[1], depth + 1) != 0) {
+		free(cur_node->child[1]);
+		free(child_rs.rules);
+		return -1;
+	}
 
-    if (build_hs_tree(&child_rs, cur_node->child[1], depth + 1) != 0) {
-        free(cur_node->child[1]);
-        free(child_rs.rules);
-        return -1;
-    }
-
-    free(child_rs.rules);
-    g_statistics.tree_node_num++;
-    g_statistics.depth_node[depth][0]++;
-    return 0;
+	free(child_rs.rules);
+	g_statistics.tree_node_num++;
+	g_statistics.depth_node[depth][0]++;
+	return 0;
 }
 
 static void cleanup_hs_tree(struct hs_bd_node *node)
 {
-    if (node->child[0] == NULL && node->child[1] == NULL) {
-        return;
-    }
+	if (node->child[0] == NULL && node->child[1] == NULL) {
+		return;
+	}
 
-    cleanup_hs_tree(node->child[0]);
-    free(node->child[0]);
+	cleanup_hs_tree(node->child[0]);
+	free(node->child[0]);
 
-    cleanup_hs_tree(node->child[1]);
-    free(node->child[1]);
+	cleanup_hs_tree(node->child[1]);
+	free(node->child[1]);
 
-    return;
+	return;
 }
 
 static void cleanup_bd(void *userdata)
 {
-    struct hs_bd_node *root = *(typeof(root) *)userdata;
+	struct hs_bd_node *root = *(typeof(root) *) userdata;
 
-    cleanup_hs_tree(root);
-    free(root);
+	cleanup_hs_tree(root);
+	free(root);
 
-    return;
+	return;
+}
+
+static void print_node(union hs_rt_node *rt_root, union hs_rt_node *rt_node, int num, int depth, uint64_t bitmap)
+{
+	int node_num;
+	int i;
+
+	for(i = 0; i < depth; i++) {
+		if (i == 0)
+			printf("    ");
+		else if (bitmap & (1ULL << i))
+			printf("      ");
+		else
+			printf("│     ");
+	}
+
+
+	if (num == 0) {			//root node
+		//do nothing
+	} else if (num % 2 != 0) {	//left node
+		printf("├── ");
+	} else {			//right node
+		printf("└── ");
+		bitmap |= 1ULL << depth;
+	}
+
+	if (rt_node->node.intr) {
+		//printf("Node %d: Interior. D2S: %d, Thresh: %u, child %d, depth=%d\n", num, rt_node->node.d2s, rt_node->node.thresh, rt_node->node.child, depth);
+		printf("Node %d: Interior. D2S: %d, Thresh: 0x%x, child %d, depth=%d\n", num, rt_node->node.d2s, rt_node->node.thresh, rt_node->node.child, depth);
+	} else {
+		//printf("Node %d: Leaf. Thresh: rule [%u]. child %d, depth=%d\n", num, rt_node->node.thresh, rt_node->node.child, depth);
+		printf("Node %d: Leaf. Rule [%u]. depth=%d\n", num, rt_node->node.thresh, depth);
+	}
+	if (rt_node->node.child != 0) {
+		++depth;
+		node_num = rt_node->node.child;
+		//PreOrder Left node
+		rt_node =
+		    (union hs_rt_node *)((char *)rt_root +
+					 node_num *
+					 sizeof(*rt_node));
+
+		print_node(rt_root, rt_node, node_num, depth, bitmap);
+
+		//PreOrder Right node
+		rt_node =
+		    (union hs_rt_node *)((char *)rt_root +
+					 (node_num +
+					  1) * sizeof(*rt_node));
+		print_node(rt_root, rt_node, node_num + 1, depth, bitmap);
+	}
+}
+
+static void print_rt_nodes(union hs_rt_node *rt_root, int node_num)
+{
+	union hs_rt_node *rt_node;
+
+#if 0
+	int i;
+	printf("RT Node Information:\n");
+	for (i = 0; i < node_num; i++) {
+		rt_node =
+		    (union hs_rt_node *)((char *)rt_root +
+					 i * sizeof(*rt_node));
+		if (rt_node->node.intr) {
+			printf("|——");
+			printf("Node %d: Interior\n", i);
+			printf("  D2S: %d, Thresh: %u\n", rt_node->node.d2s,
+			       rt_node->node.thresh);
+			if (rt_node->node.child != 0) {
+				printf("  Child: %d\n", rt_node->node.child);
+			}
+		} else {
+			printf("Node %d: Leaf\n", i);
+			printf("  Thresh: rule %u\n", rt_node->node.thresh);
+		}
+	}
+#else
+	rt_node = (union hs_rt_node *)((char *)rt_root);
+	print_node(rt_root, rt_node, 0, 0, 0);
+
+#endif
 }
 
 static int hs_gather(void *rt_data, void *bd_data)
 {
-    struct hs_bd_node *bd_node = *(typeof(bd_node) *)bd_data;
-    union hs_rt_node *rt_root = NULL;
-    union hs_rt_node *rt_node = NULL;
-    struct hs_rt *rt = malloc(sizeof(*rt));
-    struct node_queue_head *p_nqh = malloc(sizeof(*p_nqh));
-    struct node_queue_entry *p_nqe;
-    int node_num = g_statistics.tree_node_num + g_statistics.leaf_node_num;
-    void *base = malloc(node_num * sizeof(*rt_node) + CACHE_LINE_SIZE);
-    int mem_num = 0, i;
+	struct hs_bd_node *bd_node = *(typeof(bd_node) *) bd_data;
+	union hs_rt_node *rt_root = NULL;
+	union hs_rt_node *rt_node = NULL;
+	struct hs_rt *rt = malloc(sizeof(*rt));
+	struct node_queue_head *p_nqh = malloc(sizeof(*p_nqh));
+	struct node_queue_entry *p_nqe;
+	int node_num = g_statistics.tree_node_num + g_statistics.leaf_node_num;
+	void *base = malloc(node_num * sizeof(*rt_node) + CACHE_LINE_SIZE);
+	int mem_num = 0, i;
+	int count = 0;
 
-    if (base == NULL || p_nqh == NULL || rt == NULL) {
-        fprintf(stderr, "malloc rt_data mem or p_nqh or rt fails!\n");
-        return -1;
-    }
+	if (base == NULL || p_nqh == NULL || rt == NULL) {
+		fprintf(stderr, "malloc rt_data mem or p_nqh or rt fails!\n");
+		return -1;
+	}
 
-    /*
-     * malloc for root rt_node
-     */
-    rt_root = (typeof(rt_node))ALIGN((size_t)base, CACHE_LINE_SIZE);
-    rt_node = rt_root;
-    mem_num++;
+	/*
+	 * malloc for root rt_node
+	 */
+	rt_root = (typeof(rt_node)) ALIGN((size_t)base, CACHE_LINE_SIZE);
+	rt_node = rt_root;
+	mem_num++;
 
-    /*
-     * trigger queue
-     */
-    STAILQ_INIT(p_nqh);
-    p_nqe = malloc(sizeof(*p_nqe));
-    if (p_nqe == NULL) {
-        fprintf(stderr, "malloc p_nqe fails!\n");
-        goto err;
-    }
-    p_nqe->offset = 0;
-    p_nqe->bd_node = bd_node;
-    STAILQ_INSERT_TAIL(p_nqh, p_nqe, e);
+	/*
+	 * trigger queue
+	 */
+	STAILQ_INIT(p_nqh);
+	p_nqe = malloc(sizeof(*p_nqe));
+	if (p_nqe == NULL) {
+		fprintf(stderr, "malloc p_nqe fails!\n");
+		goto err;
+	}
+	p_nqe->offset = 0;
+	p_nqe->bd_node = bd_node;
+	STAILQ_INSERT_TAIL(p_nqh, p_nqe, e);
 
-    /*
-     * process
-     */
-    while (!STAILQ_EMPTY(p_nqh)) {
-        if (mem_num > node_num) {
-            fprintf(stderr, "rt mem overflow!\n");
-            goto err;
-        }
+	/*
+	 * process
+	 */
+	while (!STAILQ_EMPTY(p_nqh)) {
+		if (mem_num > node_num) {
+			fprintf(stderr, "rt mem overflow!\n");
+			goto err;
+		}
 
-        /*
-         * pop queue element, find corresponding addr
-         */
-        p_nqe = STAILQ_FIRST(p_nqh);
-        STAILQ_REMOVE_HEAD(p_nqh, e);
-        bd_node = p_nqe->bd_node;
-        rt_node = rt_root + p_nqe->offset;
-        free(p_nqe);
+		/*
+		 * pop queue element, find corresponding addr
+		 */
+		p_nqe = STAILQ_FIRST(p_nqh);
+		STAILQ_REMOVE_HEAD(p_nqh, e);
+		bd_node = p_nqe->bd_node;
+		rt_node = rt_root + p_nqe->offset;
+		free(p_nqe);
 
-        if (bd_node->child[0] != NULL) {
-            /*
-             * update node data
-             */
-            rt_node->u64 = 0;
-            rt_node->node.intr = 1;
-            rt_node->node.d2s = bd_node->d2s;
-            rt_node->node.thresh = bd_node->thresh.u32;
-            /*
-             * malloc new addr for rt_node, push element
-             */
-            rt_node->node.child = mem_num;
-            mem_num += 2;
-            for (i = 0; i < 2; i++) {
-                p_nqe = malloc(sizeof(*p_nqe));
-                if (p_nqe == NULL) {
-                    fprintf(stderr, "malloc p_nqe fails\n");
-                    goto err;
-                }
-                p_nqe->offset = mem_num - 2 + i;
-                p_nqe->bd_node = bd_node->child[i];
-                STAILQ_INSERT_TAIL(p_nqh, p_nqe, e);
-            }
-        } else {
-            rt_node->u64 = 0;
-            rt_node->node.thresh = bd_node->thresh.u32;
-        }
-    }
+		if (bd_node->child[0] != NULL) {
+			/*
+			 * update node data
+			 */
+			rt_node->u64 = 0;
+			rt_node->node.intr = 1;
+			rt_node->node.d2s = bd_node->d2s;
+			rt_node->node.thresh = bd_node->thresh.u32;
+			/*
+			 * malloc new addr for rt_node, push element
+			 */
+			rt_node->node.child = mem_num;
+			printf("%d: rt_node->node.intr %d, rt_node->node.d2s %d, rt_node->node.thresh %x, rt_node->node.child %d\n",
+				count++, rt_node->node.intr, rt_node->node.d2s, rt_node->node.thresh, rt_node->node.child);
+			mem_num += 2;
+			for (i = 0; i < 2; i++) {
+				p_nqe = malloc(sizeof(*p_nqe));
+				if (p_nqe == NULL) {
+					fprintf(stderr, "malloc p_nqe fails\n");
+					goto err;
+				}
+				p_nqe->offset = mem_num - 2 + i;
+				p_nqe->bd_node = bd_node->child[i];
+				STAILQ_INSERT_TAIL(p_nqh, p_nqe, e);
+			}
+		} else {
+			rt_node->u64 = 0;
+			rt_node->node.thresh = bd_node->thresh.u32;
+			printf("%d: rt_node->node.thresh %u\n", count++, rt_node->node.thresh);
+		}
+	}
 
-    if (mem_num != node_num) {
-        fprintf(stderr, "mem_num != node_num\n");
-        goto err;
-    } else {
-        fprintf(stderr, "mem alloc: %dKB\n",\
-                (mem_num * sizeof(*rt_node) + CACHE_LINE_SIZE) >> 10);
-    }
+	if (mem_num != node_num) {
+		fprintf(stderr, "mem_num != node_num\n");
+		goto err;
+	} else {
+		fprintf(stderr, "mem alloc: %ldKB\n",
+			(mem_num * sizeof(*rt_node) + CACHE_LINE_SIZE) >> 10);
+		fprintf(stderr, "mem alloc: %ldB\n",
+			(mem_num * sizeof(*rt_node) + CACHE_LINE_SIZE));
+	}
 
-    cleanup_bd(bd_data);
-    rt->root = rt_root;
-    rt->base = base;
-    *(typeof(rt) *)rt_data = rt;
-    return 0;
+	cleanup_bd(bd_data);
+	rt->root = rt_root;
+	rt->base = base;
+	*(typeof(rt) *) rt_data = rt;
+
+#if 1
+	// 打印所有节点信息
+	print_rt_nodes(rt_root, node_num);
+#endif
+	return 0;
 
 err:
-    while (!STAILQ_EMPTY(p_nqh)) {
-        p_nqe = STAILQ_FIRST(p_nqh);
-        STAILQ_REMOVE_HEAD(p_nqh, e);
-        free(p_nqe);
-    }
-    free(p_nqh);
-    free(base);
-    free(rt);
-    *(typeof(rt) *)rt_data = NULL;
-    return -1;
+	while (!STAILQ_EMPTY(p_nqh)) {
+		p_nqe = STAILQ_FIRST(p_nqh);
+		STAILQ_REMOVE_HEAD(p_nqh, e);
+		free(p_nqe);
+	}
+	free(p_nqh);
+	free(base);
+	free(rt);
+	*(typeof(rt) *) rt_data = NULL;
+	return -1;
 }
 
 int build(const struct rule_set *rs, void *userdata)
 {
-    int i;
-    struct hs_bd_node *bd_root = calloc(1, sizeof(*bd_root));
+	int i;
+	struct hs_bd_node *bd_root = calloc(1, sizeof(*bd_root));
 
-    if (bd_root == NULL) {
-        return -1;
-    }
+	if (bd_root == NULL) {
+		return -1;
+	}
 
-    g_statistics.segment_total = 1;
+	g_statistics.segment_total = 1;
 
-    if (build_hs_tree(rs, bd_root, 0) == 0) {
-        /* rule_set statistics */
-        printf("\nsegment_num = ");
-        for (i = 0; i < DIM_MAX; i++) {
-            printf("%lu ", g_statistics.segment_num[i]);
-        }
-        printf("\nsegment_total = %lu", g_statistics.segment_total);
+	if (build_hs_tree(rs, bd_root, 0) == 0) {
+		/* rule_set statistics */
+		printf("\nsegment_num = ");
+		for (i = 0; i < DIM_MAX; i++) {
+			printf("%lu ", g_statistics.segment_num[i]);
+		}
+		printf("\nsegment_total = %lu", g_statistics.segment_total);
 
-        /* depth statistics */
-        printf("\nworst_depth = %lu", g_statistics.worst_depth);
-        printf("\naverage_depth = %f", (float)g_statistics.average_depth /
-                g_statistics.leaf_node_num);
+		/* depth statistics */
+		printf("\nworst_depth = %lu", g_statistics.worst_depth);
+		printf("\naverage_depth = %f",
+		       (float)g_statistics.average_depth /
+		       g_statistics.leaf_node_num);
 
-        /* node statistics */
-        printf("\ntree_node_num = %lu", g_statistics.tree_node_num);
-        printf("\nleaf_node_num = %lu", g_statistics.leaf_node_num);
-        printf("\ntotal_memory = %lu", (g_statistics.tree_node_num +
-            g_statistics.leaf_node_num) << 3);
+		/* node statistics */
+		printf("\ntree_node_num = %lu", g_statistics.tree_node_num);
+		printf("\nleaf_node_num = %lu", g_statistics.leaf_node_num);
+		printf("\ntotal_memory = %lu", (g_statistics.tree_node_num +
+						g_statistics.
+						leaf_node_num) << 3);
 
-        /* node statistics detail */
-        printf("\ndepth   node    intrnl  leaf\n");
-        for (i = 0; i <= g_statistics.worst_depth; i++) {
-            printf("%-8d%-8d%-8d%-8d\n", i, g_statistics.depth_node[i][0] +
-                g_statistics.depth_node[i][1], g_statistics.depth_node[i][0],
-                g_statistics.depth_node[i][1]);
-        }
-        printf("\n");
+		/* node statistics detail */
+		printf("\ndepth   \tnode    \tintrnl  \tleaf\n");
+		for (i = 0; i <= g_statistics.worst_depth; i++) {
+			printf("%-16d%-16ld%-16ld%-16ld\n", i,
+			       g_statistics.depth_node[i][0] +
+			       g_statistics.depth_node[i][1],
+			       g_statistics.depth_node[i][0],
+			       g_statistics.depth_node[i][1]);
+		}
+		printf("\n");
 
-        if (hs_gather(userdata, &bd_root) == 0) {
-            return 0;
-        } else {
-            cleanup_bd(&bd_root);
-            return -1;
-        }
-    } else {
-        *(struct hs_rt **)userdata = NULL;
-        return -1;
-    }
+		if (hs_gather(userdata, &bd_root) == 0) {
+			return 0;
+		} else {
+			cleanup_bd(&bd_root);
+			return -1;
+		}
+	} else {
+		*(struct hs_rt **)userdata = NULL;
+		return -1;
+	}
 }
 
 int search(const struct trace *t, const void *userdata)
 {
-    int i, c;
+	int i, c;
 
-    for (i = 0; i < t->num; i++) {
-        if ((c = classify(&t->pkts[i], userdata)) != t->pkts[i].match) {
-            fprintf(stderr, "pkt[%d] match:%d, classify: %d", i+1, t->pkts[i].match+1, c+1);
-            return -1;
-        }
-    }
+	for (i = 0; i < t->num; i++) {
+		if ((c = classify(&t->pkts[i], userdata)) != t->pkts[i].match) {
+			fprintf(stderr, "pkt[%d] match:%d, classify: %d", i + 1,
+				t->pkts[i].match + 1, c + 1);
+			return -1;
+		}
+	}
 
-    return 0;
+	return 0;
 }
 
 int classify(struct packet *pkt, const void *userdata)
 {
-    struct hs_rt *rt = *(typeof(rt) *)userdata;
-    union hs_rt_node *rt_node = rt->root;
+	struct hs_rt *rt = *(typeof(rt) *) userdata;
+	union hs_rt_node *rt_node = rt->root;
 
-    while (rt_node->node.intr) {
-        if (pkt->val[rt_node->node.d2s].u32 <= rt_node->node.thresh) {
-            rt_node = rt->root + rt_node->node.child;
-        } else {
-            rt_node = rt->root + rt_node->node.child + 1;
-        }
-    }
+	while (rt_node->node.intr) {
+		if (pkt->val[rt_node->node.d2s].u32 <= rt_node->node.thresh) {
+			rt_node = rt->root + rt_node->node.child;
+		} else {
+			rt_node = rt->root + rt_node->node.child + 1;
+		}
+	}
 
-    return rt_node->node.thresh;
+	return rt_node->node.thresh;
 }
 
 void cleanup(void *userdata)
 {
-    struct hs_rt *rt = *(typeof(rt) *)userdata;
-    free(rt->base);
-    free(rt);
+	struct hs_rt *rt = *(typeof(rt) *) userdata;
+	free(rt->base);
+	free(rt);
 
-    return;
+	return;
 }
