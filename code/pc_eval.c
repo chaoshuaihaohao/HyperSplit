@@ -90,7 +90,7 @@ int main(int argc, char *argv[])
 	timediff = make_timediff(&starttime, &stoptime);
 
 	printf("Building pass\n");
-	printf("Time for building: %lld(us)\n", timediff);
+	printf("Time for building: %ld(us)\n", timediff);
 
 	unload_rules(&rs);
 
@@ -118,7 +118,7 @@ int main(int argc, char *argv[])
 	timediff = make_timediff(&starttime, &stoptime);
 
 	printf("Searching pass\n");
-	printf("Time for searching: %lld(us)\n", timediff);
+	printf("Time for searching: %ld(us)\n", timediff);
 	printf("Searching speed: %lld(pps)\n", (t.num * 1000000ULL) / timediff);
 
 	unload_trace(&t);
@@ -163,7 +163,7 @@ static void parse_args(int argc, char *argv[])
 				exit(-1);
 			} else {
 				if (option == 'm') {
-					cfg.method = atoi(optarg);
+					cfg.method = optarg;
 				}
 				break;
 			}
@@ -452,7 +452,7 @@ void point_xnor(union point *out, union point *left, union point *right)
 
 void point_print(union point *point)
 {
-	printf("%016llx%016llx\n", point->u128.high, point->u128.low);
+	printf("%016lx%016lx\n", point->u128.high, point->u128.low);
 }
 
 void set_bit(union point *p, unsigned int bit, unsigned int val)

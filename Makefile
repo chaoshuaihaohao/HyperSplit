@@ -18,7 +18,11 @@ OBJ = $(patsubst $(CODE_DIR)/%.c, $(BUILD_DIR)/%.o, $(SRC))
 BIN = $(BUILD_DIR)/pc_algo
 
 CC = gcc
-CFLAGS = -Wall -g -O0
+CFLAGS += -Wall -g -O0
+CFLAGS += -fstack-protector -fPIE -Wframe-larger-than=2048
+CFLAGS += -Wextra -Wuninitialized #-Werror -fstack-protector -fPIE
+CFLAGS += -Wno-unused-parameter -Wno-sign-compare
+
 
 all: $(BIN)
 
